@@ -130,9 +130,11 @@ export default function Board({
         <div className="game-over-overlay">
           <h2>
             {gameOver.winner
-              ? gameOver.winner === myColor
-                ? "🏆 You win!"
-                : "You lose"
+              ? myColor === null
+                ? `${gameOver.winner.charAt(0).toUpperCase + gameOver.winner.slice(1)} wins!}`
+                : gameOver.winner === myColor
+                  ? "🏆 You win!"
+                  : "You lose"
               : "Draw!"}
           </h2>
           <p>{gameOver.reason}</p>

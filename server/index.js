@@ -8,6 +8,11 @@ import { connectDB } from "./db.js";
 import { Game } from "./models/Game.js";
 
 const app = express();
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST");
+  next();
+});
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
@@ -26,7 +31,7 @@ const TIME_CONTROLS = {
 };
 const DEFAULT_TC = "blitz";
 
-// ─── In-memory room store (active games only) ──────────────────────────────
+// ─── Room store ────────────────────────────────────────────────────────────
 const rooms = {};
 
 function createRoom(roomId, timeControl = DEFAULT_TC) {
@@ -34,6 +39,7 @@ function createRoom(roomId, timeControl = DEFAULT_TC) {
   rooms[roomId] = {
     chess: new Chess(),
     players: { white: null, black: null },
+    spectators: new Set(), // ← NEW: tracks spectator socket IDs
     status: "waiting",
     rematchVotes: new Set(),
     timeControl,
@@ -47,7 +53,11 @@ function createRoom(roomId, timeControl = DEFAULT_TC) {
 
 function getRoomForSocket(socketId) {
   for (const [roomId, room] of Object.entries(rooms)) {
-    if (room.players.white === socketId || room.players.black === socketId) {
+    if (
+      room.players.white === socketId ||
+      room.players.black === socketId ||
+      room.spectators.has(socketId)
+    ) {
       return { roomId, room };
     }
   }
@@ -61,8 +71,6 @@ function getColorForSocket(room, socketId) {
 }
 
 // ─── DB helpers ────────────────────────────────────────────────────────────
-
-// Create a new game document in MongoDB
 async function dbCreateGame(roomId, timeControl) {
   const tc = TIME_CONTROLS[timeControl] ?? TIME_CONTROLS[DEFAULT_TC];
   try {
@@ -78,7 +86,6 @@ async function dbCreateGame(roomId, timeControl) {
   }
 }
 
-// Persist the current room state after every move
 async function dbSaveMove(roomId, room) {
   try {
     await Game.findOneAndUpdate(
@@ -90,14 +97,12 @@ async function dbSaveMove(roomId, room) {
         timeBlack: room.timeBlack,
         status: room.status,
       },
-      { new: true },
     );
   } catch (err) {
     console.error(`[db] Failed to save move for ${roomId}:`, err.message);
   }
 }
 
-// Mark a game as finished with a winner and reason
 async function dbFinishGame(roomId, winner, endReason) {
   try {
     await Game.findOneAndUpdate(
@@ -109,18 +114,15 @@ async function dbFinishGame(roomId, winner, endReason) {
   }
 }
 
-// Restore a room from the database (called on reconnect if room is not in memory)
 async function dbRestoreRoom(roomId) {
   try {
     const doc = await Game.findOne({ roomId });
     if (!doc || doc.status === "finished") return null;
-
-    const tc = TIME_CONTROLS[doc.timeControl] ?? TIME_CONTROLS[DEFAULT_TC];
     const chess = new Chess(doc.fen);
-
     rooms[roomId] = {
       chess,
       players: { white: null, black: null },
+      spectators: new Set(),
       status: doc.status,
       rematchVotes: new Set(),
       timeControl: doc.timeControl,
@@ -129,7 +131,6 @@ async function dbRestoreRoom(roomId) {
       turnStartedAt: null,
       timerInterval: null,
     };
-
     console.log(`[db] Restored room ${roomId} from database`);
     return rooms[roomId];
   } catch (err) {
@@ -159,11 +160,8 @@ function startTimer(roomId) {
       return;
     }
 
-    if (r.chess.turn() === "w") {
-      r.timeWhite = Math.max(0, r.timeWhite - 1000);
-    } else {
-      r.timeBlack = Math.max(0, r.timeBlack - 1000);
-    }
+    if (r.chess.turn() === "w") r.timeWhite = Math.max(0, r.timeWhite - 1000);
+    else r.timeBlack = Math.max(0, r.timeBlack - 1000);
 
     io.to(roomId).emit("timer_update", {
       timeWhite: r.timeWhite,
@@ -185,11 +183,9 @@ function startTimer(roomId) {
 function recordMoveTime(room) {
   if (!room.turnStartedAt) return;
   const elapsed = Date.now() - room.turnStartedAt;
-  if (room.chess.turn() === "b") {
+  if (room.chess.turn() === "b")
     room.timeWhite = Math.max(0, room.timeWhite - (elapsed % 1000));
-  } else {
-    room.timeBlack = Math.max(0, room.timeBlack - (elapsed % 1000));
-  }
+  else room.timeBlack = Math.max(0, room.timeBlack - (elapsed % 1000));
   room.turnStartedAt = Date.now();
 }
 
@@ -203,6 +199,7 @@ function buildGameState(room, roomId) {
     history: chess.history({ verbose: true }),
     status: room.status,
     players: { white: !!room.players.white, black: !!room.players.black },
+    spectatorCount: room.spectators.size, // ← NEW: so clients can show viewer count
     isCheck: chess.inCheck(),
     isCheckmate: chess.isCheckmate(),
     isStalemate: chess.isStalemate(),
@@ -235,14 +232,12 @@ io.on("connection", (socket) => {
     const room = createRoom(roomId, timeControl);
     room.players.white = socket.id;
     socket.join(roomId);
-
     await dbCreateGame(roomId, timeControl);
-
     console.log(`[create_room] ${socket.id} → room ${roomId} (${timeControl})`);
     callback({ roomId, color: "white" });
   });
 
-  // ── Join room ────────────────────────────────────────────────────────
+  // ── Join room (as player) ────────────────────────────────────────────
   socket.on("join_room", async (data, callback) => {
     if (typeof callback !== "function")
       return console.error("[join_room] missing callback");
@@ -259,16 +254,39 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     startTimer(roomId);
 
-    // Mark game as playing in DB
     try {
       await Game.findOneAndUpdate({ roomId }, { status: "playing" });
     } catch (err) {
-      console.error(`[db] Failed to update status for ${roomId}:`, err.message);
+      console.error(`[db] status update failed:`, err.message);
     }
 
     console.log(`[join_room] ${socket.id} → room ${roomId} as ${color}`);
     callback({ color });
     io.to(roomId).emit("game_state", buildGameState(room, roomId));
+  });
+
+  // ── Join as spectator ────────────────────────────────────────────────
+  socket.on("join_spectator", (data, callback) => {
+    const { roomId } = data;
+    const room = rooms[roomId];
+
+    if (!room) return callback({ error: "Room not found" });
+    if (room.status === "finished")
+      return callback({ error: "Game has ended" });
+
+    room.spectators.add(socket.id);
+    socket.join(roomId);
+
+    console.log(
+      `[spectator] ${socket.id} watching room ${roomId} (${room.spectators.size} viewers)`,
+    );
+
+    // Send current game state immediately so board jumps to current position
+    callback({ ok: true, spectatorCount: room.spectators.size });
+    socket.emit("game_state", buildGameState(room, roomId));
+
+    // Tell players someone joined to watch
+    io.to(roomId).emit("spectator_count", { count: room.spectators.size });
   });
 
   // ── Rejoin room ──────────────────────────────────────────────────────
@@ -277,7 +295,6 @@ io.on("connection", (socket) => {
       return console.error("[rejoin_room] missing callback");
     const { roomId, color } = data;
 
-    // Try memory first, fall back to DB restore
     let room = rooms[roomId];
     if (!room) {
       console.log(
@@ -307,6 +324,7 @@ io.on("connection", (socket) => {
     if (!room || room.status !== "playing") return;
 
     const color = getColorForSocket(room, socket.id);
+    // Spectators are silently ignored — they have no color
     if (!color) return;
 
     const chess = room.chess;
@@ -344,7 +362,6 @@ io.on("connection", (socket) => {
           : "draw";
       await dbFinishGame(roomId, winner, endReason);
     } else {
-      // Save progress after every move
       await dbSaveMove(roomId, room);
     }
 
@@ -358,7 +375,6 @@ io.on("connection", (socket) => {
     if (!room) return;
     const color = getColorForSocket(room, socket.id);
     if (!color) return;
-
     stopTimer(room);
     room.status = "finished";
     const winner = color === "white" ? "black" : "white";
@@ -371,13 +387,14 @@ io.on("connection", (socket) => {
   socket.on("vote_rematch", async ({ roomId }) => {
     const room = rooms[roomId];
     if (!room) return;
+    // Only players can vote for rematch, not spectators
+    if (!getColorForSocket(room, socket.id)) return;
+
     room.rematchVotes.add(socket.id);
 
     if (room.rematchVotes.size >= 2) {
       stopTimer(room);
       const tc = TIME_CONTROLS[room.timeControl] ?? TIME_CONTROLS[DEFAULT_TC];
-
-      // Reset in memory
       room.chess = new Chess();
       room.status = "playing";
       room.rematchVotes.clear();
@@ -387,8 +404,8 @@ io.on("connection", (socket) => {
       const { white, black } = room.players;
       room.players.white = black;
       room.players.black = white;
+      // Spectators stay in the room automatically — they're in the socket.io room
 
-      // Create a fresh DB document for the rematch with a new roomId suffix
       const newRoomId = roomId + "R";
       await dbCreateGame(newRoomId, room.timeControl);
       await Game.findOneAndUpdate({ roomId: newRoomId }, { status: "playing" });
@@ -412,13 +429,20 @@ io.on("connection", (socket) => {
     if (!result) return;
     const { roomId, room } = result;
     const color = getColorForSocket(room, socket.id);
+
+    // Handle spectator leaving cleanly
+    if (!color) {
+      room.spectators.delete(socket.id);
+      io.to(roomId).emit("spectator_count", { count: room.spectators.size });
+      console.log(
+        `[spectator left] ${socket.id} left room ${roomId} (${room.spectators.size} remaining)`,
+      );
+      return;
+    }
+
     console.log(`[disconnect] ${socket.id} (${color}) left room ${roomId}`);
-
     stopTimer(room);
-
-    // Save current state so it can be restored on rejoin
     await dbSaveMove(roomId, room);
-
     io.to(roomId).emit("opponent_disconnected", { color });
 
     setTimeout(() => {
@@ -430,20 +454,29 @@ io.on("connection", (socket) => {
           : r.players.black === socket.id;
       if (stillGone) {
         delete rooms[roomId];
-        console.log(
-          `[cleanup] room ${roomId} removed from memory (DB record kept)`,
-        );
+        console.log(`[cleanup] room ${roomId} removed from memory`);
       }
     }, 30_000);
   });
 });
 
-// ─── Health check ──────────────────────────────────────────────────────────
-app.get("/health", (_, res) =>
-  res.json({ ok: true, rooms: Object.keys(rooms).length }),
-);
+// ─── REST endpoints ────────────────────────────────────────────────────────
 
-// ─── Recent games endpoint (useful for Phase 5 analysis) ──────────────────
+// Active games list — used by the spectator lobby
+app.get("/games/active", (_, res) => {
+  const active = Object.entries(rooms)
+    .filter(([, room]) => room.status === "playing")
+    .map(([roomId, room]) => ({
+      roomId,
+      timeControl: room.timeControl,
+      moveCount: room.chess.history().length,
+      spectatorCount: room.spectators.size,
+      timeWhite: room.timeWhite,
+      timeBlack: room.timeBlack,
+    }));
+  res.json(active);
+});
+
 app.get("/games/recent", async (_, res) => {
   try {
     const games = await Game.find({ status: "finished" })
@@ -456,7 +489,6 @@ app.get("/games/recent", async (_, res) => {
   }
 });
 
-// ─── Single game endpoint (for replay / analysis) ─────────────────────────
 app.get("/games/:roomId", async (req, res) => {
   try {
     const game = await Game.findOne({ roomId: req.params.roomId });
@@ -467,9 +499,12 @@ app.get("/games/:roomId", async (req, res) => {
   }
 });
 
+app.get("/health", (_, res) =>
+  res.json({ ok: true, rooms: Object.keys(rooms).length }),
+);
+
 // ─── Boot ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
-
 connectDB().then(() => {
   httpServer.listen(PORT, () =>
     console.log(`Chess server running on http://localhost:${PORT}`),

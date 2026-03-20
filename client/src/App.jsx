@@ -10,17 +10,17 @@ import Controls from "./components/Controls";
 import Lobby from "./components/Lobby";
 import WaitingRoom from "./components/WaitingRoom";
 import ConnectionBanner from "./components/ConnectionBanner";
+import SpectatorView from "./components/SpectatorView";
 import "./index.css";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
-
-const DEFAULT_TIME = 5 * 60 * 1000; // 5 min fallback
+const DEFAULT_TIME = 5 * 60 * 1000;
 
 export default function App() {
   const { socket, connected, emit, on } = useSocket();
   const { session, saveSession, clearSession } = useGameSession();
 
-  // ── Screen ────────────────────────────────────────────────────────────
+  // ── Screen: 'lobby' | 'waiting' | 'playing' | 'spectating' ──────────
   const [screen, setScreen] = useState("lobby");
   const [roomId, setRoomId] = useState(null);
   const [myColor, setMyColor] = useState(null);
@@ -32,10 +32,9 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [inCheck, setInCheck] = useState(false);
   const [gameOver, setGameOver] = useState(null);
-
-  // ── Timer state ───────────────────────────────────────────────────────
   const [timeWhite, setTimeWhite] = useState(DEFAULT_TIME);
   const [timeBlack, setTimeBlack] = useState(DEFAULT_TIME);
+  const [spectatorCount, setSpectatorCount] = useState(0);
 
   // ── Board interaction ─────────────────────────────────────────────────
   const [selected, setSelected] = useState(null);
@@ -44,7 +43,7 @@ export default function App() {
   const [capturedByWhite, setCapturedByWhite] = useState([]);
   const [capturedByBlack, setCapturedByBlack] = useState([]);
 
-  // ── Connection / UI ───────────────────────────────────────────────────
+  // ── UI ────────────────────────────────────────────────────────────────
   const [banner, setBanner] = useState(null);
   const [rematchPending, setRematchPending] = useState(false);
 
@@ -56,12 +55,11 @@ export default function App() {
     setTurn(state.turn);
     setHistory(state.history);
     setInCheck(state.isCheck);
-
-    // Timer
     if (state.timeWhite !== undefined) setTimeWhite(state.timeWhite);
     if (state.timeBlack !== undefined) setTimeBlack(state.timeBlack);
+    if (state.spectatorCount !== undefined)
+      setSpectatorCount(state.spectatorCount);
 
-    // Recalculate captures from history
     const capW = [],
       capB = [];
     for (const move of state.history) {
@@ -93,7 +91,6 @@ export default function App() {
     setSelected(null);
     setLegalTargets([]);
 
-    // Transition from waiting to playing when both players joined
     if (state.players.white && state.players.black) {
       setScreen((s) => (s === "waiting" ? "playing" : s));
     }
@@ -104,7 +101,6 @@ export default function App() {
     const offs = [
       on("game_state", applyGameState),
 
-      // Live timer ticks from server
       on("timer_update", ({ timeWhite: tw, timeBlack: tb }) => {
         setTimeWhite(tw);
         setTimeBlack(tb);
@@ -112,6 +108,10 @@ export default function App() {
 
       on("game_over", ({ winner, reason }) => {
         setGameOver({ winner, reason });
+      }),
+
+      on("spectator_count", ({ count }) => {
+        setSpectatorCount(count);
       }),
 
       on("opponent_disconnected", () => {
@@ -198,6 +198,42 @@ export default function App() {
     [socket, saveSession],
   );
 
+  // ── Watch a game as spectator ─────────────────────────────────────────
+  const handleWatchGame = useCallback(
+    (roomIdToWatch) => {
+      socket.current.emit(
+        "join_spectator",
+        { roomId: roomIdToWatch },
+        (res) => {
+          if (res.error) {
+            alert(res.error);
+            return;
+          }
+          setRoomId(roomIdToWatch);
+          setMyColor(null);
+          setSpectatorCount(res.spectatorCount);
+          setScreen("spectating");
+        },
+      );
+    },
+    [socket],
+  );
+
+  // ── Leave spectator view ──────────────────────────────────────────────
+  const handleLeaveSpectator = useCallback(() => {
+    setScreen("lobby");
+    setRoomId(null);
+    setMyColor(null);
+    setGameOver(null);
+    setHistory([]);
+    setLastMove(null);
+    chessRef.current = new Chess();
+    setBoardState(chessRef.current.board());
+    setTurn("w");
+    setTimeWhite(DEFAULT_TIME);
+    setTimeBlack(DEFAULT_TIME);
+  }, []);
+
   // ── Square click ──────────────────────────────────────────────────────
   const handleSquareClick = useCallback(
     (key) => {
@@ -282,6 +318,7 @@ export default function App() {
         <Lobby
           onCreateRoom={handleCreateRoom}
           onJoinRoom={handleJoinRoom}
+          onWatchGame={handleWatchGame}
           connected={connected}
         />
       </div>
@@ -296,6 +333,24 @@ export default function App() {
     );
   }
 
+  if (screen === "spectating") {
+    return (
+      <SpectatorView
+        boardState={boardState}
+        turn={turn}
+        history={history}
+        inCheck={inCheck}
+        gameOver={gameOver}
+        lastMove={lastMove}
+        timeWhite={timeWhite}
+        timeBlack={timeBlack}
+        spectatorCount={spectatorCount}
+        roomId={roomId}
+        onLeave={handleLeaveSpectator}
+      />
+    );
+  }
+
   const isMyTurn =
     (myColor === "white" && turn === "w") ||
     (myColor === "black" && turn === "b");
@@ -307,6 +362,9 @@ export default function App() {
       <header className="header">
         <h1>♞ CHESS</h1>
         <div className="header-right">
+          {spectatorCount > 0 && (
+            <span className="room-badge">👁 {spectatorCount} watching</span>
+          )}
           <span className="room-badge">Room: {roomId}</span>
           <span className={`conn-dot ${connected ? "online" : "offline"}`} />
         </div>

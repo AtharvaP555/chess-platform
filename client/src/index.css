@@ -777,3 +777,166 @@ body {
     border-color: #e74c3c99;
   }
 }
+
+/* Lobby tabs */
+.lobby-tabs {
+  display: flex;
+  gap: 4px;
+  background: #ffffff0d;
+  border: 1px solid #ffffff15;
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.lobby-tab {
+  flex: 1;
+  padding: 8px 32px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.lobby-tab:hover {
+  color: var(--text);
+}
+
+.lobby-tab-active {
+  background: #ffffff18;
+  color: var(--text);
+}
+
+/* Watch card */
+.watch-card {
+  width: 100%;
+  max-width: 560px;
+  padding: 20px;
+}
+
+.watch-card h2 {
+  font-size: 16px;
+  font-weight: normal;
+  margin-bottom: 4px;
+}
+
+.watch-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+/* Active games list */
+.active-games-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.active-games-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.active-games-hint {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.active-game-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #ffffff08;
+  border: 1px solid #ffffff12;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+
+.active-game-row:hover {
+  background: #ffffff12;
+}
+
+.active-game-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.active-game-room {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--light-sq);
+  letter-spacing: 1px;
+}
+
+.active-game-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.active-game-clocks {
+  display: flex;
+  gap: 10px;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.white-clock {
+  color: #e0e0e0;
+}
+.black-clock {
+  color: #aaa;
+}
+
+.active-game-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spectator-badge {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.btn-watch {
+  padding: 6px 14px;
+  background: #ffffff15;
+  color: var(--text);
+  border: 1px solid #ffffff25;
+  border-radius: 6px;
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  width: auto;
+}
+
+.btn-watch:hover {
+  background: #ffffff25;
+}
+
+/* Spectating badge in header */
+.spectating-badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  background: #ffffff15;
+  border: 1px solid #ffffff25;
+  border-radius: 20px;
+  color: var(--light-sq);
+  letter-spacing: 0.5px;
+}
