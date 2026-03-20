@@ -9,10 +9,7 @@ import { Game } from "./models/Game.js";
 
 const app = express();
 app.use((req, res, next) => {
-  const allowed = [
-    "http://localhost:5173",
-    "https://your-app.vercel.app", // ← add this after you get it
-  ];
+  const allowed = ["http://localhost:5173", "https://your-app.vercel.app"];
   const origin = req.headers.origin;
   if (allowed.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
