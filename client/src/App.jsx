@@ -35,6 +35,9 @@ export default function App() {
   const [timeWhite, setTimeWhite] = useState(DEFAULT_TIME);
   const [timeBlack, setTimeBlack] = useState(DEFAULT_TIME);
   const [spectatorCount, setSpectatorCount] = useState(0);
+  const [fen, setFen] = useState(
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  );
 
   // ── Board interaction ─────────────────────────────────────────────────
   const [selected, setSelected] = useState(null);
@@ -51,6 +54,7 @@ export default function App() {
   const applyGameState = useCallback((state) => {
     const chess = new Chess(state.fen);
     chessRef.current = chess;
+    setFen(chess.fen());
     setBoardState(chess.board());
     setTurn(state.turn);
     setHistory(state.history);
@@ -347,6 +351,7 @@ export default function App() {
         spectatorCount={spectatorCount}
         roomId={roomId}
         onLeave={handleLeaveSpectator}
+        fen={fen}
       />
     );
   }

@@ -940,3 +940,207 @@ body {
   color: var(--light-sq);
   letter-spacing: 0.5px;
 }
+
+/* Board + eval bar side by side */
+.board-and-eval {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Eval bar */
+.eval-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: var(--board-size);
+}
+
+.eval-bar {
+  width: 18px;
+  flex: 1;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #ffffff20;
+}
+
+.eval-bar-black {
+  background: #222;
+  width: 100%;
+  min-height: 4px;
+}
+
+.eval-bar-white {
+  background: #f0d9b5;
+  width: 100%;
+  min-height: 4px;
+}
+
+.eval-bar-label {
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--muted);
+  height: 14px;
+  line-height: 14px;
+}
+
+/* Best move arrow */
+.best-move-arrow {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Inline eval in status card */
+.eval-inline {
+  font-size: 13px;
+  color: var(--muted);
+  font-family: monospace;
+}
+
+/* Analysis panel */
+.analysis-panel {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.analysis-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.analysis-panel::-webkit-scrollbar-thumb {
+  background: #ffffff30;
+  border-radius: 2px;
+}
+
+.analysis-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 8px 0;
+}
+
+/* Accuracy row */
+.accuracy-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ffffff15;
+}
+
+.accuracy-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.accuracy-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid #888;
+  flex-shrink: 0;
+}
+.accuracy-color-dot.white {
+  background: #fff;
+}
+.accuracy-color-dot.black {
+  background: #222;
+}
+
+.accuracy-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.accuracy-score {
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--light-sq);
+  margin-left: auto;
+}
+
+.accuracy-divider {
+  width: 1px;
+  height: 32px;
+  background: #ffffff20;
+}
+
+/* Classification grid */
+.classification-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ffffff15;
+}
+
+.classification-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.class-symbol {
+  width: 16px;
+  text-align: center;
+  font-size: 13px;
+}
+.class-label {
+  flex: 1;
+  color: var(--muted);
+}
+.class-count {
+  font-family: monospace;
+  font-weight: bold;
+}
+.class-sep {
+  color: var(--muted);
+}
+
+/* Per-move analysis list */
+.move-analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.move-analysis-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.move-analysis-row:hover {
+  background: #ffffff08;
+}
+
+.move-analysis-num {
+  width: 28px;
+  color: var(--muted);
+  font-family: monospace;
+  flex-shrink: 0;
+}
+.move-analysis-san {
+  flex: 1;
+  font-family: monospace;
+}
+.move-analysis-class {
+  font-size: 11px;
+}

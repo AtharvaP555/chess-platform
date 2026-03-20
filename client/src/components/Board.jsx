@@ -1,3 +1,5 @@
+import BestMoveArrow from "./BestMoveArrow";
+
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
 const PIECES = {
@@ -31,10 +33,8 @@ function Square({
   onClick,
   flipped,
 }) {
-  // Visual position after optional flip
   const visualRank = flipped ? 7 - rank : rank;
   const visualFile = flipped ? 7 - file : file;
-
   const isLight = (rank + file) % 2 === 0;
   const key = FILES[file] + (8 - rank);
   const symbol = getSymbol(piece);
@@ -45,7 +45,6 @@ function Square({
   else if (isInCheck) bg = "var(--check)";
   else if (isLastMove) bg = isLight ? "#cdd16f" : "#aaa23a";
 
-  // Show file coord on bottom row, rank coord on right column
   const showFile = flipped ? visualRank === 0 : visualRank === 7;
   const showRank = flipped ? visualFile === 0 : visualFile === 7;
 
@@ -69,9 +68,7 @@ function Square({
           {FILES[file]}
         </span>
       )}
-
       {isLegal && <div className={piece ? "ring-hint" : "dot-hint"} />}
-
       {symbol && <span className="piece">{symbol}</span>}
     </div>
   );
@@ -89,6 +86,7 @@ export default function Board({
   onSquareClick,
   onNewGame,
   myColor,
+  bestMoveSq = null, // ← NEW: from Stockfish, shown for spectators only
 }) {
   const squares = [];
 
@@ -126,12 +124,18 @@ export default function Board({
   return (
     <div className="board">
       {squares}
+
+      {/* Best move arrow — only rendered when bestMoveSq is provided (spectators) */}
+      {bestMoveSq && !gameOver && (
+        <BestMoveArrow bestMoveSq={bestMoveSq} flipped={flipped} />
+      )}
+
       {gameOver && (
         <div className="game-over-overlay">
           <h2>
             {gameOver.winner
               ? myColor === null
-                ? `${gameOver.winner.charAt(0).toUpperCase + gameOver.winner.slice(1)} wins!}`
+                ? `${gameOver.winner.charAt(0).toUpperCase() + gameOver.winner.slice(1)} wins!`
                 : gameOver.winner === myColor
                   ? "🏆 You win!"
                   : "You lose"
@@ -141,7 +145,8 @@ export default function Board({
           <button onClick={onNewGame}>Rematch</button>
         </div>
       )}
-      {!gameOver && !isMyTurn && (
+
+      {!gameOver && !isMyTurn && myColor !== null && (
         <div className="waiting-overlay">
           <span>Waiting for opponent…</span>
         </div>
