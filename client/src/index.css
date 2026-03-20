@@ -9,6 +9,7 @@
   --text: #e0e0e0;
   --muted: #8899aa;
   --accent: #e94560;
+  --danger: #c0392b;
   --font: "Georgia", serif;
 }
 
@@ -25,7 +26,7 @@ body {
   min-height: 100vh;
 }
 
-/* ─── Layout ─────────────────────────────────── */
+/* ─── App shell ──────────────────────────────── */
 
 .app {
   display: flex;
@@ -51,11 +52,263 @@ body {
   font-weight: normal;
 }
 
-.header span {
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.room-badge {
   font-size: 12px;
   color: var(--muted);
   letter-spacing: 1px;
+  font-family: monospace;
 }
+
+/* ─── Lobby ──────────────────────────────────── */
+
+.lobby {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 40px 20px;
+  gap: 32px;
+}
+
+.lobby-hero {
+  text-align: center;
+}
+
+.lobby-hero h1 {
+  font-size: 48px;
+  color: var(--light-sq);
+  font-weight: normal;
+  letter-spacing: 6px;
+}
+
+.lobby-subtitle {
+  color: var(--muted);
+  font-size: 14px;
+  letter-spacing: 2px;
+  margin-top: 6px;
+}
+
+.lobby-cards {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.lobby-card {
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 28px 20px;
+}
+
+.lobby-card-icon {
+  font-size: 28px;
+  color: var(--light-sq);
+  margin-bottom: 4px;
+}
+
+.lobby-card h2 {
+  font-size: 18px;
+  font-weight: normal;
+  color: var(--text);
+}
+
+.lobby-card p {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.room-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: #ffffff10;
+  border: 1px solid #ffffff25;
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 18px;
+  font-family: monospace;
+  letter-spacing: 4px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.room-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.room-input::placeholder {
+  color: var(--muted);
+  letter-spacing: 2px;
+  font-size: 13px;
+}
+
+.lobby-error {
+  font-size: 12px;
+  color: #e74c3c;
+}
+
+.lobby-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ─── Waiting room ───────────────────────────── */
+
+.waiting-room {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 32px;
+  padding: 40px 20px;
+}
+
+.waiting-card {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  padding: 32px 24px;
+}
+
+.waiting-card h2 {
+  font-size: 18px;
+  font-weight: normal;
+}
+
+.waiting-card p {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.waiting-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #ffffff20;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.room-code-display {
+  background: #ffffff0d;
+  border: 1px solid #ffffff20;
+  border-radius: 8px;
+  padding: 14px 24px;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.room-code-display:hover {
+  background: #ffffff18;
+}
+
+.room-code {
+  font-size: 32px;
+  font-family: monospace;
+  letter-spacing: 8px;
+  color: var(--light-sq);
+}
+
+.copy-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.color-badge {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.color-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: capitalize;
+}
+
+.color-pill.white {
+  background: #ffffff;
+  color: #222;
+}
+
+.color-pill.black {
+  background: #333;
+  color: #eee;
+  border: 1px solid #555;
+}
+
+/* ─── Connection banner ──────────────────────── */
+
+.conn-banner {
+  width: 100%;
+  padding: 10px 24px;
+  background: #0f3460;
+  border-bottom: 1px solid #ffffff20;
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.conn-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ─── Connection dot ─────────────────────────── */
+
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.conn-dot.online {
+  background: #2ecc71;
+}
+.conn-dot.offline {
+  background: #e74c3c;
+}
+
+/* ─── Game layout ────────────────────────────── */
 
 .main {
   display: flex;
@@ -67,8 +320,6 @@ body {
   width: 100%;
   max-width: 900px;
 }
-
-/* ─── Board wrap ─────────────────────────────── */
 
 .board-wrap {
   display: flex;
@@ -157,7 +408,6 @@ body {
   pointer-events: none;
 }
 
-/* Legal move hints */
 .dot-hint {
   position: absolute;
   width: 28%;
@@ -178,7 +428,6 @@ body {
   z-index: 1;
 }
 
-/* Board coordinates */
 .coord {
   position: absolute;
   font-size: 10px;
@@ -198,18 +447,35 @@ body {
   right: 3px;
 }
 
-/* ─── Game over overlay ──────────────────────── */
+/* ─── Overlays ───────────────────────────────── */
 
-.game-over-overlay {
+.game-over-overlay,
+.waiting-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.72);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
   z-index: 20;
+}
+
+.game-over-overlay {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.waiting-overlay {
+  background: rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.waiting-overlay span {
+  font-size: 14px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.5);
+  padding: 6px 14px;
+  border-radius: 20px;
 }
 
 .game-over-overlay h2 {
@@ -267,7 +533,7 @@ body {
   font-weight: normal;
 }
 
-/* ─── Status card ────────────────────────────── */
+/* ─── Status ─────────────────────────────────── */
 
 .status-msg {
   font-size: 15px;
@@ -346,7 +612,6 @@ body {
 .move-cell:hover {
   background: #ffffff18;
 }
-
 .move-cell.latest {
   background: #ffffff22;
   color: var(--light-sq);
@@ -377,19 +642,27 @@ body {
 .btn:active {
   transform: scale(0.97);
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   opacity: 0.85;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn-primary {
   background: var(--accent);
   color: #fff;
 }
-
 .btn-secondary {
   background: #ffffff15;
   color: var(--text);
   border: 1px solid #ffffff20;
+}
+.btn-danger {
+  background: #c0392b22;
+  color: #e74c3c;
+  border: 1px solid #c0392b44;
 }
 
 /* ─── Responsive ─────────────────────────────── */
@@ -401,5 +674,106 @@ body {
   }
   .side-panel {
     width: var(--board-size);
+  }
+  .lobby-cards {
+    flex-direction: column;
+  }
+  .lobby-card {
+    width: 100%;
+    max-width: 300px;
+  }
+}
+
+/* Time control picker */
+.tc-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+}
+
+.tc-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 6px;
+  background: #ffffff0d;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+  color: var(--text);
+  font-family: var(--font);
+}
+
+.tc-btn:hover {
+  background: #ffffff18;
+}
+
+.tc-btn-active {
+  background: #ffffff15;
+  border-color: var(--accent);
+  box-shadow: 0 0 6px rgba(233, 69, 96, 0.25);
+}
+
+.tc-label {
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.tc-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Clock */
+.clock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  padding: 4px 10px;
+  background: #ffffff0d;
+  border: 1px solid #ffffff18;
+  border-radius: 6px;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+
+.clock-time {
+  font-family: monospace;
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--text);
+  letter-spacing: 1px;
+}
+
+.clock-active {
+  background: #ffffff15;
+  border-color: #ffffff35;
+}
+
+.clock-warning .clock-time {
+  color: #f39c12;
+}
+.clock-urgent .clock-time {
+  color: #e74c3c;
+}
+
+.clock-urgent {
+  animation: pulse-urgent 1s ease-in-out infinite;
+}
+
+@keyframes pulse-urgent {
+  0%,
+  100% {
+    border-color: #e74c3c44;
+  }
+  50% {
+    border-color: #e74c3c99;
   }
 }

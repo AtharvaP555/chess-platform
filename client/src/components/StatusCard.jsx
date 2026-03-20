@@ -1,19 +1,29 @@
-export default function StatusCard({ turn, inCheck, gameOver }) {
-  let message = ''
-  let subText = ''
+export default function StatusCard({
+  turn,
+  inCheck,
+  gameOver,
+  myColor,
+  isMyTurn,
+}) {
+  let message = "";
+  let sub = "";
 
   if (gameOver) {
-    message = gameOver.winner ? `${gameOver.winner} wins!` : 'Draw!'
-    subText = gameOver.reason
+    if (gameOver.winner) {
+      message = gameOver.winner === myColor ? "You win!" : "You lose";
+    } else {
+      message = "Draw!";
+    }
+    sub = gameOver.reason;
   } else if (inCheck) {
-    message = `${turn === 'w' ? 'White' : 'Black'} is in check!`
-    subText = `${turn === 'w' ? 'White' : 'Black'}'s turn`
+    message = isMyTurn ? "You are in check!" : "Opponent is in check!";
+    sub = isMyTurn ? "Your turn" : "Opponent's turn";
   } else {
-    message = `${turn === 'w' ? 'White' : 'Black'} to move`
-    subText = `${turn === 'w' ? 'White' : 'Black'}'s turn`
+    message = isMyTurn ? "Your turn" : "Opponent's turn";
+    sub = `${turn === "w" ? "White" : "Black"} to move`;
   }
 
-  const dotBg = gameOver ? 'transparent' : turn === 'w' ? '#ffffff' : '#222222'
+  const dotBg = gameOver ? "transparent" : turn === "w" ? "#ffffff" : "#222222";
 
   return (
     <div className="card">
@@ -22,10 +32,10 @@ export default function StatusCard({ turn, inCheck, gameOver }) {
       <div className="turn-indicator">
         <span
           className="turn-dot"
-          style={{ background: dotBg, border: '1px solid #888' }}
+          style={{ background: dotBg, border: "1px solid #888" }}
         />
-        <span>{subText}</span>
+        <span>{sub}</span>
       </div>
     </div>
-  )
+  );
 }

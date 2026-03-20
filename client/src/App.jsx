@@ -1,58 +1,213 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Chess } from "chess.js";
+import { useSocket } from "./hooks/useSocket";
+import { useGameSession } from "./hooks/useGameSession";
 import Board from "./components/Board";
 import PlayerBar from "./components/PlayerBar";
 import StatusCard from "./components/StatusCard";
 import MoveHistory from "./components/MoveHistory";
 import Controls from "./components/Controls";
+import Lobby from "./components/Lobby";
+import WaitingRoom from "./components/WaitingRoom";
+import ConnectionBanner from "./components/ConnectionBanner";
 import "./index.css";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
+const DEFAULT_TIME = 5 * 60 * 1000; // 5 min fallback
+
 export default function App() {
+  const { socket, connected, emit, on } = useSocket();
+  const { session, saveSession, clearSession } = useGameSession();
+
+  // ── Screen ────────────────────────────────────────────────────────────
+  const [screen, setScreen] = useState("lobby");
+  const [roomId, setRoomId] = useState(null);
+  const [myColor, setMyColor] = useState(null);
+
+  // ── Game state ────────────────────────────────────────────────────────
   const chessRef = useRef(new Chess());
   const [boardState, setBoardState] = useState(() => chessRef.current.board());
+  const [turn, setTurn] = useState("w");
+  const [history, setHistory] = useState([]);
+  const [inCheck, setInCheck] = useState(false);
+  const [gameOver, setGameOver] = useState(null);
+
+  // ── Timer state ───────────────────────────────────────────────────────
+  const [timeWhite, setTimeWhite] = useState(DEFAULT_TIME);
+  const [timeBlack, setTimeBlack] = useState(DEFAULT_TIME);
+
+  // ── Board interaction ─────────────────────────────────────────────────
   const [selected, setSelected] = useState(null);
   const [legalTargets, setLegalTargets] = useState([]);
   const [lastMove, setLastMove] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [capturedByWhite, setCapturedByWhite] = useState([]); // white captured black pieces
-  const [capturedByBlack, setCapturedByBlack] = useState([]); // black captured white pieces
-  const [gameOver, setGameOver] = useState(null); // null | { winner, reason }
-  const [inCheck, setInCheck] = useState(false);
-  const [turn, setTurn] = useState("w");
+  const [capturedByWhite, setCapturedByWhite] = useState([]);
+  const [capturedByBlack, setCapturedByBlack] = useState([]);
 
-  // Sync all derived state from chess engine after every move
-  const syncState = useCallback(() => {
-    const chess = chessRef.current;
+  // ── Connection / UI ───────────────────────────────────────────────────
+  const [banner, setBanner] = useState(null);
+  const [rematchPending, setRematchPending] = useState(false);
+
+  // ── Apply server game_state ───────────────────────────────────────────
+  const applyGameState = useCallback((state) => {
+    const chess = new Chess(state.fen);
+    chessRef.current = chess;
     setBoardState(chess.board());
-    setHistory(chess.history({ verbose: true }));
-    setTurn(chess.turn());
-    setInCheck(chess.inCheck());
+    setTurn(state.turn);
+    setHistory(state.history);
+    setInCheck(state.isCheck);
 
-    if (chess.isGameOver()) {
-      if (chess.isCheckmate()) {
-        setGameOver({
-          winner: chess.turn() === "w" ? "Black" : "White",
-          reason: "Checkmate",
-        });
-      } else if (chess.isStalemate()) {
-        setGameOver({ winner: null, reason: "Stalemate" });
-      } else if (chess.isThreefoldRepetition()) {
-        setGameOver({ winner: null, reason: "Threefold repetition" });
-      } else if (chess.isInsufficientMaterial()) {
-        setGameOver({ winner: null, reason: "Insufficient material" });
-      } else {
-        setGameOver({ winner: null, reason: "50-move rule" });
+    // Timer
+    if (state.timeWhite !== undefined) setTimeWhite(state.timeWhite);
+    if (state.timeBlack !== undefined) setTimeBlack(state.timeBlack);
+
+    // Recalculate captures from history
+    const capW = [],
+      capB = [];
+    for (const move of state.history) {
+      if (move.captured) {
+        if (move.color === "w") capW.push(move.captured);
+        else capB.push(move.captured);
       }
+    }
+    setCapturedByWhite(capW);
+    setCapturedByBlack(capB);
+
+    const h = state.history;
+    setLastMove(
+      h.length > 0
+        ? { from: h[h.length - 1].from, to: h[h.length - 1].to }
+        : null,
+    );
+
+    if (state.isGameOver) {
+      if (state.isCheckmate)
+        setGameOver({ winner: state.winner, reason: "Checkmate" });
+      else if (state.isStalemate)
+        setGameOver({ winner: null, reason: "Stalemate" });
+      else setGameOver({ winner: null, reason: "Draw" });
+    } else {
+      setGameOver(null);
+    }
+
+    setSelected(null);
+    setLegalTargets([]);
+
+    // Transition from waiting to playing when both players joined
+    if (state.players.white && state.players.black) {
+      setScreen((s) => (s === "waiting" ? "playing" : s));
     }
   }, []);
 
+  // ── Socket listeners ──────────────────────────────────────────────────
+  useEffect(() => {
+    const offs = [
+      on("game_state", applyGameState),
+
+      // Live timer ticks from server
+      on("timer_update", ({ timeWhite: tw, timeBlack: tb }) => {
+        setTimeWhite(tw);
+        setTimeBlack(tb);
+      }),
+
+      on("game_over", ({ winner, reason }) => {
+        setGameOver({ winner, reason });
+      }),
+
+      on("opponent_disconnected", () => {
+        setBanner("Opponent disconnected. Waiting 30s…");
+      }),
+
+      on("opponent_reconnected", () => {
+        setBanner("Opponent reconnected!");
+        setTimeout(() => setBanner(null), 3000);
+      }),
+
+      on("rematch_requested", () => {
+        setRematchPending(true);
+        setBanner("Opponent wants a rematch!");
+      }),
+
+      on("rematch_start", () => {
+        setRematchPending(false);
+        setBanner(null);
+        setGameOver(null);
+        setSelected(null);
+        setLegalTargets([]);
+      }),
+    ];
+    return () => offs.forEach((off) => off?.());
+  }, [on, applyGameState]);
+
+  // ── Rejoin on reconnect ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!connected || !session) return;
+    socket.current.emit(
+      "rejoin_room",
+      { roomId: session.roomId, color: session.color },
+      (res) => {
+        if (res.error) {
+          clearSession();
+          return;
+        }
+        setRoomId(session.roomId);
+        setMyColor(session.color);
+        setScreen("playing");
+        setBanner("Reconnected!");
+        setTimeout(() => setBanner(null), 3000);
+      },
+    );
+  }, [connected]); // eslint-disable-line
+
+  // ── Lobby actions ─────────────────────────────────────────────────────
+  const handleCreateRoom = useCallback(
+    (timeControl) => {
+      return new Promise((resolve) => {
+        socket.current.emit(
+          "create_room",
+          { timeControl },
+          ({ roomId: id, color }) => {
+            setRoomId(id);
+            setMyColor(color);
+            saveSession(id, color);
+            setScreen("waiting");
+            resolve();
+          },
+        );
+      });
+    },
+    [socket, saveSession],
+  );
+
+  const handleJoinRoom = useCallback(
+    (code) => {
+      return new Promise((resolve) => {
+        socket.current.emit("join_room", { roomId: code }, (res) => {
+          if (res.error) {
+            resolve(res.error);
+            return;
+          }
+          setRoomId(code);
+          setMyColor(res.color);
+          saveSession(code, res.color);
+          setScreen("playing");
+          resolve(null);
+        });
+      });
+    },
+    [socket, saveSession],
+  );
+
+  // ── Square click ──────────────────────────────────────────────────────
   const handleSquareClick = useCallback(
     (key) => {
-      const chess = chessRef.current;
-      if (chess.isGameOver()) return;
+      if (gameOver) return;
+      const isMyTurn =
+        (myColor === "white" && turn === "w") ||
+        (myColor === "black" && turn === "b");
+      if (!isMyTurn) return;
 
+      const chess = chessRef.current;
       const f = FILES.indexOf(key[0]);
       const r = 8 - parseInt(key[1]);
       const piece = chess.board()[r][f];
@@ -60,33 +215,16 @@ export default function App() {
 
       if (selected) {
         if (legalTargets.includes(key)) {
-          // Attempt the move
-          try {
-            const result = chess.move({
-              from: selected,
-              to: key,
-              promotion: "q",
-            });
-            if (result) {
-              setLastMove({ from: selected, to: key });
-              if (result.captured) {
-                if (result.color === "w") {
-                  setCapturedByWhite((prev) => [...prev, result.captured]);
-                } else {
-                  setCapturedByBlack((prev) => [...prev, result.captured]);
-                }
-              }
-              setSelected(null);
-              setLegalTargets([]);
-              syncState();
-              return;
-            }
-          } catch {
-            // invalid move, fall through
-          }
+          emit("make_move", {
+            roomId,
+            from: selected,
+            to: key,
+            promotion: "q",
+          });
+          setSelected(null);
+          setLegalTargets([]);
+          return;
         }
-
-        // Clicked own piece — re-select
         if (piece && piece.color === currentTurn) {
           setSelected(key);
           setLegalTargets(
@@ -97,7 +235,6 @@ export default function App() {
           setLegalTargets([]);
         }
       } else {
-        // Nothing selected yet — select if own piece
         if (piece && piece.color === currentTurn) {
           setSelected(key);
           setLegalTargets(
@@ -106,56 +243,87 @@ export default function App() {
         }
       }
     },
-    [selected, legalTargets, syncState],
+    [selected, legalTargets, turn, myColor, roomId, emit, gameOver],
   );
 
-  const handleUndo = useCallback(() => {
-    const chess = chessRef.current;
-    if (chess.history().length === 0) return;
-    const undone = chess.undo();
-    if (undone) {
-      if (undone.captured) {
-        if (undone.color === "w")
-          setCapturedByWhite((prev) => prev.slice(0, -1));
-        else setCapturedByBlack((prev) => prev.slice(0, -1));
-      }
-      const h = chess.history({ verbose: true });
-      setLastMove(
-        h.length > 0
-          ? { from: h[h.length - 1].from, to: h[h.length - 1].to }
-          : null,
-      );
-      setSelected(null);
-      setLegalTargets([]);
-      setGameOver(null);
-      syncState();
-    }
-  }, [syncState]);
+  // ── Controls ──────────────────────────────────────────────────────────
+  const handleResign = useCallback(
+    () => emit("resign", { roomId }),
+    [emit, roomId],
+  );
+  const handleRematch = useCallback(() => {
+    emit("vote_rematch", { roomId });
+    setBanner("Rematch requested…");
+  }, [emit, roomId]);
 
-  const handleNewGame = useCallback(() => {
-    chessRef.current = new Chess();
+  const handleLeave = useCallback(() => {
+    clearSession();
+    setScreen("lobby");
+    setRoomId(null);
+    setMyColor(null);
+    setGameOver(null);
     setSelected(null);
     setLegalTargets([]);
     setLastMove(null);
     setCapturedByWhite([]);
     setCapturedByBlack([]);
-    setGameOver(null);
-    syncState();
-  }, [syncState]);
+    chessRef.current = new Chess();
+    setBoardState(chessRef.current.board());
+    setTurn("w");
+    setHistory([]);
+    setTimeWhite(DEFAULT_TIME);
+    setTimeBlack(DEFAULT_TIME);
+  }, [clearSession]);
+
+  // ── Render ────────────────────────────────────────────────────────────
+  if (screen === "lobby") {
+    return (
+      <div className="app">
+        <Lobby
+          onCreateRoom={handleCreateRoom}
+          onJoinRoom={handleJoinRoom}
+          connected={connected}
+        />
+      </div>
+    );
+  }
+
+  if (screen === "waiting") {
+    return (
+      <div className="app">
+        <WaitingRoom roomId={roomId} color={myColor} onCancel={handleLeave} />
+      </div>
+    );
+  }
+
+  const isMyTurn =
+    (myColor === "white" && turn === "w") ||
+    (myColor === "black" && turn === "b");
+  const opponentColor = myColor === "white" ? "black" : "white";
+  const flipped = myColor === "black";
 
   return (
     <div className="app">
       <header className="header">
         <h1>♞ CHESS</h1>
-        <span>PHASE 1 — LOCAL 2-PLAYER</span>
+        <div className="header-right">
+          <span className="room-badge">Room: {roomId}</span>
+          <span className={`conn-dot ${connected ? "online" : "offline"}`} />
+        </div>
       </header>
+
+      {banner && <ConnectionBanner message={banner} />}
 
       <main className="main">
         <div className="board-wrap">
           <PlayerBar
-            color="black"
-            isActive={turn === "b" && !gameOver}
-            captured={capturedByBlack}
+            color={opponentColor}
+            isActive={!isMyTurn && !gameOver}
+            captured={
+              opponentColor === "white" ? capturedByWhite : capturedByBlack
+            }
+            label="Opponent"
+            timeMs={opponentColor === "white" ? timeWhite : timeBlack}
           />
           <Board
             boardState={boardState}
@@ -165,20 +333,36 @@ export default function App() {
             inCheck={inCheck}
             turn={turn}
             gameOver={gameOver}
+            flipped={flipped}
             onSquareClick={handleSquareClick}
-            onNewGame={handleNewGame}
+            onNewGame={handleRematch}
+            myColor={myColor}
           />
           <PlayerBar
-            color="white"
-            isActive={turn === "w" && !gameOver}
-            captured={capturedByWhite}
+            color={myColor}
+            isActive={isMyTurn && !gameOver}
+            captured={myColor === "white" ? capturedByWhite : capturedByBlack}
+            label="You"
+            timeMs={myColor === "white" ? timeWhite : timeBlack}
           />
         </div>
 
         <div className="side-panel">
-          <StatusCard turn={turn} inCheck={inCheck} gameOver={gameOver} />
+          <StatusCard
+            turn={turn}
+            inCheck={inCheck}
+            gameOver={gameOver}
+            myColor={myColor}
+            isMyTurn={isMyTurn}
+          />
           <MoveHistory history={history} />
-          <Controls onUndo={handleUndo} onNewGame={handleNewGame} />
+          <Controls
+            onResign={handleResign}
+            onRematch={handleRematch}
+            onLeave={handleLeave}
+            gameOver={gameOver}
+            rematchPending={rematchPending}
+          />
         </div>
       </main>
     </div>
