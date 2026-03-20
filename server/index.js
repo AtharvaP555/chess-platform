@@ -9,7 +9,14 @@ import { Game } from "./models/Game.js";
 
 const app = express();
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "http://localhost:5173");
+  const allowed = [
+    "http://localhost:5173",
+    "https://your-app.vercel.app", // ← add this after you get it
+  ];
+  const origin = req.headers.origin;
+  if (allowed.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST");
   next();
 });
@@ -17,7 +24,7 @@ const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: ["http://localhost:5173", "https://your-app.vercel.app"],
     methods: ["GET", "POST"],
   },
 });
