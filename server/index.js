@@ -7,25 +7,28 @@ import { nanoid } from "nanoid";
 import { connectDB } from "./db.js";
 import { Game } from "./models/Game.js";
 
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "https://chess-platform-tau.vercel.app",
+];
+
 const app = express();
 app.use((req, res, next) => {
-  const allowed = [
-    "http://localhost:5173",
-    "https://chess-platform-tau.vercel.app/",
-  ];
   const origin = req.headers.origin;
-  if (allowed.includes(origin)) {
+  if (ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
   next();
 });
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: ["http://localhost:5173", "https://chess-platform-tau.vercel.app/"],
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
