@@ -1,6 +1,6 @@
 :root {
-  --light-sq: #f0d9b5;
-  --dark-sq: #b58863;
+  --light-sq: #2e1f0e;
+  --dark-sq: #1a0f05;
   --check: rgba(220, 30, 30, 0.6);
   --board-size: min(480px, 90vw);
   --sq-size: calc(var(--board-size) / 8);
@@ -1143,4 +1143,78 @@ body {
 }
 .move-analysis-class {
   font-size: 11px;
+}
+
+/* Replay controls */
+.replay-controls {
+  padding: 12px 14px;
+}
+
+.replay-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.replay-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #ffffff20;
+  border-radius: 6px;
+  background: #ffffff10;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.replay-btn:hover:not(:disabled) {
+  background: #ffffff25;
+}
+
+.replay-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.replay-counter {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--muted);
+  min-width: 48px;
+  text-align: center;
+}
+
+/* Move history replay highlight */
+.move-replay-highlight {
+  background: rgba(233, 69, 96, 0.25) !important;
+  color: var(--light-sq) !important;
+  border-radius: 4px;
+}
+
+.overlay-dismiss {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #ffffff30;
+  border-radius: 50%;
+  background: #ffffff15;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.overlay-dismiss:hover {
+  background: #ffffff30;
 }

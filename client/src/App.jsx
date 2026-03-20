@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Chess } from "chess.js";
 import { useSocket } from "./hooks/useSocket";
 import { useGameSession } from "./hooks/useGameSession";
+import { useReplay } from "./hooks/useReplay";
+import { useStockfish } from "./hooks/useStockfish";
 import Board from "./components/Board";
 import PlayerBar from "./components/PlayerBar";
 import StatusCard from "./components/StatusCard";
@@ -11,16 +13,21 @@ import Lobby from "./components/Lobby";
 import WaitingRoom from "./components/WaitingRoom";
 import ConnectionBanner from "./components/ConnectionBanner";
 import SpectatorView from "./components/SpectatorView";
+import EvalBar from "./components/EvalBar";
+import ReplayControls from "./components/ReplayControls";
+import AnalysisPanel from "./components/AnalysisPanel";
+import { classifyMove, calcAccuracy } from "./components/AnalysisPanel";
 import "./index.css";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const DEFAULT_TIME = 5 * 60 * 1000;
+const STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 export default function App() {
   const { socket, connected, emit, on } = useSocket();
   const { session, saveSession, clearSession } = useGameSession();
 
-  // ── Screen: 'lobby' | 'waiting' | 'playing' | 'spectating' ──────────
+  // ── Screen ────────────────────────────────────────────────────────────
   const [screen, setScreen] = useState("lobby");
   const [roomId, setRoomId] = useState(null);
   const [myColor, setMyColor] = useState(null);
@@ -28,6 +35,7 @@ export default function App() {
   // ── Game state ────────────────────────────────────────────────────────
   const chessRef = useRef(new Chess());
   const [boardState, setBoardState] = useState(() => chessRef.current.board());
+  const [fen, setFen] = useState(STARTING_FEN);
   const [turn, setTurn] = useState("w");
   const [history, setHistory] = useState([]);
   const [inCheck, setInCheck] = useState(false);
@@ -35,9 +43,6 @@ export default function App() {
   const [timeWhite, setTimeWhite] = useState(DEFAULT_TIME);
   const [timeBlack, setTimeBlack] = useState(DEFAULT_TIME);
   const [spectatorCount, setSpectatorCount] = useState(0);
-  const [fen, setFen] = useState(
-    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-  );
 
   // ── Board interaction ─────────────────────────────────────────────────
   const [selected, setSelected] = useState(null);
@@ -50,12 +55,113 @@ export default function App() {
   const [banner, setBanner] = useState(null);
   const [rematchPending, setRematchPending] = useState(false);
 
+  // ── Replay (active after game ends) ───────────────────────────────────
+  const {
+    isReplaying,
+    currentIndex,
+    snapshot,
+    goFirst,
+    goPrev,
+    goNext,
+    goLast,
+  } = useReplay(history, !!gameOver);
+
+  // ── Stockfish (only enabled post-game for players) ────────────────────
+  const {
+    ready: sfReady,
+    analyse,
+    stop: sfStop,
+  } = useStockfish({
+    depth: 15,
+    enabled: !!gameOver && screen === "playing",
+  });
+
+  const [evalData, setEvalData] = useState({
+    evaluation: 0,
+    isMate: false,
+    mateIn: null,
+  });
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [bestMoveSq, setBestMoveSq] = useState(null);
+  const [analysisData, setAnalysisData] = useState(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+
+  // Analyse the position currently shown in replay
+  const replayFen = isReplaying && snapshot ? snapshot.fen : fen;
+
+  useEffect(() => {
+    if (!gameOver || !sfReady || !replayFen) return;
+    setEvalLoading(true);
+    setBestMoveSq(null);
+    analyse(replayFen).then((result) => {
+      if (!result) return;
+      setEvalData({
+        evaluation: result.evaluation,
+        isMate: result.isMate,
+        mateIn: result.mateIn,
+      });
+      setBestMoveSq(result.bestMoveSq ?? null);
+      setEvalLoading(false);
+    });
+    return () => sfStop();
+  }, [replayFen, sfReady, gameOver]); // eslint-disable-line
+
+  // Run full post-game analysis once when game ends
+  useEffect(() => {
+    if (!gameOver || !sfReady || history.length === 0 || analysisData) return;
+    runPostGameAnalysis();
+  }, [gameOver, sfReady]); // eslint-disable-line
+
+  const runPostGameAnalysis = useCallback(async () => {
+    setAnalysisLoading(true);
+    const chess = new Chess();
+    const evals = [];
+
+    for (const move of history) {
+      const result = await analyse(chess.fen());
+      evals.push(result ? result.evaluation * 100 : 0);
+      chess.move({
+        from: move.from,
+        to: move.to,
+        promotion: move.promotion ?? "q",
+      });
+    }
+    const finalResult = await analyse(chess.fen());
+    evals.push(finalResult ? finalResult.evaluation * 100 : 0);
+
+    const whiteMoves = [],
+      blackMoves = [],
+      annotatedMoves = [];
+
+    for (let i = 0; i < history.length; i++) {
+      const isWhite = history[i].color === "w";
+      const loss = isWhite ? evals[i] - evals[i + 1] : evals[i + 1] - evals[i];
+      const classification = classifyMove(0, loss);
+      annotatedMoves.push({ san: history[i].san, classification });
+      if (isWhite) whiteMoves.push(classification);
+      else blackMoves.push(classification);
+    }
+
+    setAnalysisData({
+      white: {
+        accuracy: calcAccuracy(whiteMoves),
+        classifications: whiteMoves,
+      },
+      black: {
+        accuracy: calcAccuracy(blackMoves),
+        classifications: blackMoves,
+      },
+      moves: annotatedMoves,
+    });
+    setAnalysisLoading(false);
+  }, [analyse, history]);
+
   // ── Apply server game_state ───────────────────────────────────────────
   const applyGameState = useCallback((state) => {
     const chess = new Chess(state.fen);
     chessRef.current = chess;
-    setFen(chess.fen());
     setBoardState(chess.board());
+    setFen(chess.fen());
     setTurn(state.turn);
     setHistory(state.history);
     setInCheck(state.isCheck);
@@ -104,46 +210,39 @@ export default function App() {
   useEffect(() => {
     const offs = [
       on("game_state", applyGameState),
-
       on("timer_update", ({ timeWhite: tw, timeBlack: tb }) => {
         setTimeWhite(tw);
         setTimeBlack(tb);
       }),
-
       on("game_over", ({ winner, reason }) => {
         setGameOver({ winner, reason });
       }),
-
-      on("spectator_count", ({ count }) => {
-        setSpectatorCount(count);
-      }),
-
-      on("opponent_disconnected", () => {
-        setBanner("Opponent disconnected. Waiting 30s…");
-      }),
-
+      on("spectator_count", ({ count }) => setSpectatorCount(count)),
+      on("opponent_disconnected", () =>
+        setBanner("Opponent disconnected. Waiting 30s…"),
+      ),
       on("opponent_reconnected", () => {
         setBanner("Opponent reconnected!");
         setTimeout(() => setBanner(null), 3000);
       }),
-
       on("rematch_requested", () => {
         setRematchPending(true);
         setBanner("Opponent wants a rematch!");
       }),
-
       on("rematch_start", () => {
         setRematchPending(false);
         setBanner(null);
         setGameOver(null);
         setSelected(null);
         setLegalTargets([]);
+        setAnalysisData(null);
+        setBestMoveSq(null);
       }),
     ];
     return () => offs.forEach((off) => off?.());
   }, [on, applyGameState]);
 
-  // ── Rejoin on reconnect ───────────────────────────────────────────────
+  // ── Rejoin ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!connected || !session) return;
     socket.current.emit(
@@ -202,7 +301,6 @@ export default function App() {
     [socket, saveSession],
   );
 
-  // ── Watch a game as spectator ─────────────────────────────────────────
   const handleWatchGame = useCallback(
     (roomIdToWatch) => {
       socket.current.emit(
@@ -223,25 +321,11 @@ export default function App() {
     [socket],
   );
 
-  // ── Leave spectator view ──────────────────────────────────────────────
-  const handleLeaveSpectator = useCallback(() => {
-    setScreen("lobby");
-    setRoomId(null);
-    setMyColor(null);
-    setGameOver(null);
-    setHistory([]);
-    setLastMove(null);
-    chessRef.current = new Chess();
-    setBoardState(chessRef.current.board());
-    setTurn("w");
-    setTimeWhite(DEFAULT_TIME);
-    setTimeBlack(DEFAULT_TIME);
-  }, []);
-
   // ── Square click ──────────────────────────────────────────────────────
   const handleSquareClick = useCallback(
     (key) => {
-      if (gameOver) return;
+      // Disable interaction during replay or after game over
+      if (gameOver || isReplaying) return;
       const isMyTurn =
         (myColor === "white" && turn === "w") ||
         (myColor === "black" && turn === "b");
@@ -283,7 +367,16 @@ export default function App() {
         }
       }
     },
-    [selected, legalTargets, turn, myColor, roomId, emit, gameOver],
+    [
+      selected,
+      legalTargets,
+      turn,
+      myColor,
+      roomId,
+      emit,
+      gameOver,
+      isReplaying,
+    ],
   );
 
   // ── Controls ──────────────────────────────────────────────────────────
@@ -296,8 +389,7 @@ export default function App() {
     setBanner("Rematch requested…");
   }, [emit, roomId]);
 
-  const handleLeave = useCallback(() => {
-    clearSession();
+  const resetState = useCallback(() => {
     setScreen("lobby");
     setRoomId(null);
     setMyColor(null);
@@ -309,13 +401,31 @@ export default function App() {
     setCapturedByBlack([]);
     chessRef.current = new Chess();
     setBoardState(chessRef.current.board());
+    setFen(STARTING_FEN);
     setTurn("w");
     setHistory([]);
     setTimeWhite(DEFAULT_TIME);
     setTimeBlack(DEFAULT_TIME);
-  }, [clearSession]);
+    setAnalysisData(null);
+    setBestMoveSq(null);
+    setEvalLoading(false);
+  }, []);
 
-  // ── Render ────────────────────────────────────────────────────────────
+  const handleLeave = useCallback(() => {
+    clearSession();
+    resetState();
+  }, [clearSession, resetState]);
+  const handleLeaveSpectator = useCallback(() => resetState(), [resetState]);
+
+  // ── What to render on the board during replay vs live ─────────────────
+  const displayBoardState =
+    isReplaying && snapshot ? snapshot.boardState : boardState;
+  const displayLastMove =
+    isReplaying && snapshot ? snapshot.lastMove : lastMove;
+  const displayInCheck = isReplaying && snapshot ? snapshot.inCheck : inCheck;
+  const displayFen = isReplaying && snapshot ? snapshot.fen : fen;
+
+  // ── Screens ───────────────────────────────────────────────────────────
   if (screen === "lobby") {
     return (
       <div className="app">
@@ -340,22 +450,23 @@ export default function App() {
   if (screen === "spectating") {
     return (
       <SpectatorView
-        boardState={boardState}
+        boardState={displayBoardState}
         turn={turn}
         history={history}
-        inCheck={inCheck}
+        inCheck={displayInCheck}
         gameOver={gameOver}
-        lastMove={lastMove}
+        lastMove={displayLastMove}
         timeWhite={timeWhite}
         timeBlack={timeBlack}
         spectatorCount={spectatorCount}
         roomId={roomId}
         onLeave={handleLeaveSpectator}
-        fen={fen}
+        fen={displayFen}
       />
     );
   }
 
+  // ── Playing screen ────────────────────────────────────────────────────
   const isMyTurn =
     (myColor === "white" && turn === "w") ||
     (myColor === "black" && turn === "b");
@@ -378,36 +489,50 @@ export default function App() {
       {banner && <ConnectionBanner message={banner} />}
 
       <main className="main">
-        <div className="board-wrap">
-          <PlayerBar
-            color={opponentColor}
-            isActive={!isMyTurn && !gameOver}
-            captured={
-              opponentColor === "white" ? capturedByWhite : capturedByBlack
-            }
-            label="Opponent"
-            timeMs={opponentColor === "white" ? timeWhite : timeBlack}
-          />
-          <Board
-            boardState={boardState}
-            selected={selected}
-            legalTargets={legalTargets}
-            lastMove={lastMove}
-            inCheck={inCheck}
-            turn={turn}
-            gameOver={gameOver}
-            flipped={flipped}
-            onSquareClick={handleSquareClick}
-            onNewGame={handleRematch}
-            myColor={myColor}
-          />
-          <PlayerBar
-            color={myColor}
-            isActive={isMyTurn && !gameOver}
-            captured={myColor === "white" ? capturedByWhite : capturedByBlack}
-            label="You"
-            timeMs={myColor === "white" ? timeWhite : timeBlack}
-          />
+        <div className="board-and-eval">
+          {/* Eval bar — only shown post-game */}
+          {gameOver && (
+            <EvalBar
+              evaluation={evalData.evaluation}
+              isMate={evalData.isMate}
+              mateIn={evalData.mateIn}
+              turn={isReplaying && snapshot ? snapshot.turn : turn}
+              loading={evalLoading}
+            />
+          )}
+
+          <div className="board-wrap">
+            <PlayerBar
+              color={opponentColor}
+              isActive={!isMyTurn && !gameOver}
+              captured={
+                opponentColor === "white" ? capturedByWhite : capturedByBlack
+              }
+              label="Opponent"
+              timeMs={opponentColor === "white" ? timeWhite : timeBlack}
+            />
+            <Board
+              boardState={displayBoardState}
+              selected={isReplaying ? null : selected}
+              legalTargets={isReplaying ? [] : legalTargets}
+              lastMove={displayLastMove}
+              inCheck={displayInCheck}
+              turn={turn}
+              gameOver={gameOver}
+              flipped={flipped}
+              onSquareClick={handleSquareClick}
+              onNewGame={handleRematch}
+              myColor={myColor}
+              bestMoveSq={gameOver ? bestMoveSq : null}
+            />
+            <PlayerBar
+              color={myColor}
+              isActive={isMyTurn && !gameOver}
+              captured={myColor === "white" ? capturedByWhite : capturedByBlack}
+              label="You"
+              timeMs={myColor === "white" ? timeWhite : timeBlack}
+            />
+          </div>
         </div>
 
         <div className="side-panel">
@@ -418,7 +543,32 @@ export default function App() {
             myColor={myColor}
             isMyTurn={isMyTurn}
           />
-          <MoveHistory history={history} />
+
+          <MoveHistory
+            history={history}
+            highlightIndex={isReplaying ? currentIndex - 1 : null}
+          />
+
+          {/* Replay controls — shown after game ends */}
+          {gameOver && (
+            <ReplayControls
+              currentMove={currentIndex}
+              totalMoves={history.length}
+              onFirst={goFirst}
+              onPrev={goPrev}
+              onNext={goNext}
+              onLast={goLast}
+            />
+          )}
+
+          {/* Analysis panel — shown after game ends */}
+          {gameOver && (
+            <AnalysisPanel
+              analysisData={analysisData}
+              loading={analysisLoading}
+            />
+          )}
+
           <Controls
             onResign={handleResign}
             onRematch={handleRematch}

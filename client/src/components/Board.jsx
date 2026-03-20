@@ -1,25 +1,29 @@
 import BestMoveArrow from "./BestMoveArrow";
+import { useState, useEffect } from "react";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
-const PIECES = {
-  wK: "♔",
-  wQ: "♕",
-  wR: "♖",
-  wB: "♗",
-  wN: "♘",
-  wP: "♙",
-  bK: "♚",
-  bQ: "♛",
-  bR: "♜",
-  bB: "♝",
-  bN: "♞",
-  bP: "♟",
+const WHITE_PIECES = {
+  K: "♔",
+  Q: "♕",
+  R: "♖",
+  B: "♗",
+  N: "♘",
+  P: "♙",
+};
+const BLACK_PIECES = {
+  K: "♚",
+  Q: "♛",
+  R: "♜",
+  B: "♝",
+  N: "♞",
+  P: "♟",
 };
 
 function getSymbol(piece) {
   if (!piece) return null;
-  return PIECES[(piece.color === "w" ? "w" : "b") + piece.type.toUpperCase()];
+  const set = piece.color === "w" ? WHITE_PIECES : BLACK_PIECES;
+  return set[piece.type.toUpperCase()];
 }
 
 function Square({
@@ -43,7 +47,7 @@ function Square({
   let bg = isLight ? "var(--light-sq)" : "var(--dark-sq)";
   if (isSelected) bg = "rgba(20,85,255,0.5)";
   else if (isInCheck) bg = "var(--check)";
-  else if (isLastMove) bg = isLight ? "#cdd16f" : "#aaa23a";
+  else if (isLastMove) bg = isLight ? "#5c3a1e" : "#3d2510";
 
   const showFile = flipped ? visualRank === 0 : visualRank === 7;
   const showRank = flipped ? visualFile === 0 : visualFile === 7;
@@ -69,7 +73,14 @@ function Square({
         </span>
       )}
       {isLegal && <div className={piece ? "ring-hint" : "dot-hint"} />}
-      {symbol && <span className="piece">{symbol}</span>}
+      {symbol && (
+        <span
+          className="piece"
+          style={{ color: piece.color === "w" ? "#fff8f0" : "#f0a050" }}
+        >
+          {symbol}
+        </span>
+      )}
     </div>
   );
 }
@@ -121,6 +132,11 @@ export default function Board({
       (myColor === "black" && turn === "b")
     : true;
 
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    setDismissed(false);
+  }, [gameOver]);
+
   return (
     <div className="board">
       {squares}
@@ -130,8 +146,12 @@ export default function Board({
         <BestMoveArrow bestMoveSq={bestMoveSq} flipped={flipped} />
       )}
 
-      {gameOver && (
+      {gameOver && !dismissed && (
         <div className="game-over-overlay">
+          <button
+            className="overlay-dismiss"
+            onClick={() => setDismissed(true)}
+          ></button>
           <h2>
             {gameOver.winner
               ? myColor === null
