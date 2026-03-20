@@ -6,22 +6,33 @@ import { Chess } from "chess.js";
 import { nanoid } from "nanoid";
 import { connectDB } from "./db.js";
 import { Game } from "./models/Game.js";
+import { User } from "./models/User.js";
+import { authRouter } from "./authRoutes.js";
+import { verifySocketToken } from "./authMiddleware.js";
+import { calculateNewRatings } from "./elo.js";
+
+const app = express();
 
 const ALLOWED_ORIGINS = [
   "http://localhost:5173",
-  "https://chess-platform-tau.vercel.app",
-];
+  process.env.CLIENT_URL,
+].filter(Boolean);
 
-const app = express();
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Credentials", "true");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
+
+app.use(express.json());
+app.use("/auth", authRouter);
+
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
@@ -44,15 +55,18 @@ const DEFAULT_TC = "blitz";
 // ─── Room store ────────────────────────────────────────────────────────────
 const rooms = {};
 
-function createRoom(roomId, timeControl = DEFAULT_TC) {
+function createRoom(roomId, timeControl = DEFAULT_TC, rated = false) {
   const tc = TIME_CONTROLS[timeControl] ?? TIME_CONTROLS[DEFAULT_TC];
   rooms[roomId] = {
     chess: new Chess(),
     players: { white: null, black: null },
-    spectators: new Set(), // ← NEW: tracks spectator socket IDs
+    // Identity per seat — { userId, username, rating } or null for guest
+    identities: { white: null, black: null },
+    spectators: new Set(),
     status: "waiting",
     rematchVotes: new Set(),
     timeControl,
+    rated,
     timeWhite: tc.ms,
     timeBlack: tc.ms,
     turnStartedAt: null,
@@ -81,15 +95,30 @@ function getColorForSocket(room, socketId) {
 }
 
 // ─── DB helpers ────────────────────────────────────────────────────────────
-async function dbCreateGame(roomId, timeControl) {
-  const tc = TIME_CONTROLS[timeControl] ?? TIME_CONTROLS[DEFAULT_TC];
+async function dbCreateGame(roomId, room) {
+  const tc = TIME_CONTROLS[room.timeControl] ?? TIME_CONTROLS[DEFAULT_TC];
+  const white = room.identities.white;
+  const black = room.identities.black;
   try {
     await Game.create({
       roomId,
-      timeControl,
+      timeControl: room.timeControl,
       timeWhite: tc.ms,
       timeBlack: tc.ms,
       status: "waiting",
+      rated: room.rated,
+      playerIds: {
+        white: white?.userId ?? null,
+        black: black?.userId ?? null,
+      },
+      playerNames: {
+        white: white?.username ?? "Guest",
+        black: black?.username ?? "Guest",
+      },
+      ratingsBefore: {
+        white: white?.rating ?? null,
+        black: black?.rating ?? null,
+      },
     });
   } catch (err) {
     console.error(`[db] Failed to create game ${roomId}:`, err.message);
@@ -113,15 +142,87 @@ async function dbSaveMove(roomId, room) {
   }
 }
 
-async function dbFinishGame(roomId, winner, endReason) {
+async function dbFinishGame(roomId, room, winner, endReason) {
+  const ratingChanges = { white: null, black: null };
+
+  // Apply ELO if rated and both players are registered
+  if (room.rated) {
+    const wi = room.identities.white;
+    const bi = room.identities.black;
+
+    if (wi?.userId && bi?.userId) {
+      try {
+        const [whiteUser, blackUser] = await Promise.all([
+          User.findById(wi.userId),
+          User.findById(bi.userId),
+        ]);
+
+        if (whiteUser && blackUser) {
+          const tc = room.timeControl;
+          const ratingW = whiteUser.ratings[tc] ?? 1200;
+          const ratingB = blackUser.ratings[tc] ?? 1200;
+          const gamesW = whiteUser.gamesPlayed[tc] ?? 0;
+          const gamesB = blackUser.gamesPlayed[tc] ?? 0;
+
+          // result from white's perspective: 1=white wins, 0=black wins, 0.5=draw
+          const result = winner === "white" ? 1 : winner === "black" ? 0 : 0.5;
+
+          const { newRatingA, newRatingB, deltaA, deltaB } =
+            calculateNewRatings(ratingW, ratingB, gamesW, gamesB, result);
+
+          ratingChanges.white = deltaA;
+          ratingChanges.black = deltaB;
+
+          // Update white user
+          await User.findByIdAndUpdate(wi.userId, {
+            [`ratings.${tc}`]: newRatingA,
+            $inc: {
+              [`gamesPlayed.${tc}`]: 1,
+              wins: winner === "white" ? 1 : 0,
+              losses: winner === "black" ? 1 : 0,
+              draws: winner === null ? 1 : 0,
+            },
+          });
+
+          // Update black user
+          await User.findByIdAndUpdate(bi.userId, {
+            [`ratings.${tc}`]: newRatingB,
+            $inc: {
+              [`gamesPlayed.${tc}`]: 1,
+              wins: winner === "black" ? 1 : 0,
+              losses: winner === "white" ? 1 : 0,
+              draws: winner === null ? 1 : 0,
+            },
+          });
+
+          console.log(
+            `[elo] ${wi.username}: ${ratingW} → ${newRatingA} (${deltaA > 0 ? "+" : ""}${deltaA})`,
+          );
+          console.log(
+            `[elo] ${bi.username}: ${ratingB} → ${newRatingB} (${deltaB > 0 ? "+" : ""}${deltaB})`,
+          );
+        }
+      } catch (err) {
+        console.error(`[elo] Failed to update ratings:`, err.message);
+      }
+    }
+  }
+
   try {
     await Game.findOneAndUpdate(
       { roomId },
-      { status: "finished", winner: winner ?? null, endReason },
+      {
+        status: "finished",
+        winner: winner ?? null,
+        endReason,
+        ratingChanges,
+      },
     );
   } catch (err) {
     console.error(`[db] Failed to finish game ${roomId}:`, err.message);
   }
+
+  return ratingChanges;
 }
 
 async function dbRestoreRoom(roomId) {
@@ -132,10 +233,12 @@ async function dbRestoreRoom(roomId) {
     rooms[roomId] = {
       chess,
       players: { white: null, black: null },
+      identities: { white: null, black: null },
       spectators: new Set(),
       status: doc.status,
       rematchVotes: new Set(),
       timeControl: doc.timeControl,
+      rated: doc.rated,
       timeWhite: doc.timeWhite,
       timeBlack: doc.timeBlack,
       turnStartedAt: null,
@@ -183,8 +286,12 @@ function startTimer(roomId) {
       stopTimer(r);
       r.status = "finished";
       const winner = r.timeWhite === 0 ? "black" : "white";
-      io.to(roomId).emit("game_over", { winner, reason: "timeout" });
-      await dbFinishGame(roomId, winner, "timeout");
+      const ratingChanges = await dbFinishGame(roomId, r, winner, "timeout");
+      io.to(roomId).emit("game_over", {
+        winner,
+        reason: "timeout",
+        ratingChanges,
+      });
       console.log(`[timeout] room ${roomId}: ${winner} wins on time`);
     }
   }, 1000);
@@ -209,7 +316,23 @@ function buildGameState(room, roomId) {
     history: chess.history({ verbose: true }),
     status: room.status,
     players: { white: !!room.players.white, black: !!room.players.black },
-    spectatorCount: room.spectators.size, // ← NEW: so clients can show viewer count
+    // Include identity info so client can show names + ratings
+    identities: {
+      white: room.identities.white
+        ? {
+            username: room.identities.white.username,
+            rating: room.identities.white.rating,
+          }
+        : null,
+      black: room.identities.black
+        ? {
+            username: room.identities.black.username,
+            rating: room.identities.black.rating,
+          }
+        : null,
+    },
+    rated: room.rated,
+    spectatorCount: room.spectators.size,
     isCheck: chess.inCheck(),
     isCheckmate: chess.isCheckmate(),
     isStalemate: chess.isStalemate(),
@@ -231,43 +354,95 @@ function buildGameState(room, roomId) {
 
 // ─── Socket handlers ───────────────────────────────────────────────────────
 io.on("connection", (socket) => {
-  console.log(`[connect] ${socket.id}`);
+  // Verify JWT from handshake auth (optional — guests have no token)
+  const userId = verifySocketToken(socket.handshake.auth?.token);
+  socket.userId = userId || null;
+  console.log(
+    `[connect] ${socket.id} (${userId ? "user:" + userId : "guest"})`,
+  );
 
-  // ── Create room ──────────────────────────────────────────────────────
   socket.on("create_room", async (data, callback) => {
-    if (typeof callback !== "function")
-      return console.error("[create_room] missing callback");
+    if (typeof callback !== "function") return;
     const timeControl = data?.timeControl ?? DEFAULT_TC;
+    const rated = data?.rated ?? false;
     const roomId = nanoid(6).toUpperCase();
-    const room = createRoom(roomId, timeControl);
+    const room = createRoom(roomId, timeControl, rated);
+
+    // Attach identity if logged in
+    if (socket.userId) {
+      try {
+        const user = await User.findById(socket.userId).select(
+          "username ratings",
+        );
+        if (user) {
+          room.identities.white = {
+            userId: user._id,
+            username: user.username,
+            rating: user.ratings[timeControl] ?? 1200,
+          };
+        }
+      } catch (err) {
+        console.error("[identity] failed to load user:", err.message);
+      }
+    }
+
     room.players.white = socket.id;
     socket.join(roomId);
-    await dbCreateGame(roomId, timeControl);
-    console.log(`[create_room] ${socket.id} → room ${roomId} (${timeControl})`);
+    await dbCreateGame(roomId, room);
+    console.log(
+      `[create_room] ${socket.id} → room ${roomId} (${timeControl}, rated:${rated})`,
+    );
     callback({ roomId, color: "white" });
   });
 
-  // ── Join room (as player) ────────────────────────────────────────────
   socket.on("join_room", async (data, callback) => {
-    if (typeof callback !== "function")
-      return console.error("[join_room] missing callback");
+    if (typeof callback !== "function") return;
     const { roomId } = data;
     const room = rooms[roomId];
-
     if (!room) return callback({ error: "Room not found" });
     if (room.players.white && room.players.black)
       return callback({ error: "Room is full" });
 
+    // Can't play rated game as guest if opponent is registered
+    // (allow it — just won't affect ratings)
+
     const color = room.players.white ? "black" : "white";
+
+    if (socket.userId) {
+      try {
+        const user = await User.findById(socket.userId).select(
+          "username ratings",
+        );
+        if (user) {
+          room.identities[color] = {
+            userId: user._id,
+            username: user.username,
+            rating: user.ratings[room.timeControl] ?? 1200,
+          };
+        }
+      } catch (err) {
+        console.error("[identity] failed to load user:", err.message);
+      }
+    }
+
     room.players[color] = socket.id;
     room.status = "playing";
     socket.join(roomId);
     startTimer(roomId);
 
+    // Update DB with player identities now that both are known
     try {
-      await Game.findOneAndUpdate({ roomId }, { status: "playing" });
+      await Game.findOneAndUpdate(
+        { roomId },
+        {
+          status: "playing",
+          "playerIds.black": room.identities.black?.userId ?? null,
+          "playerNames.black": room.identities.black?.username ?? "Guest",
+          "ratingsBefore.black": room.identities.black?.rating ?? null,
+        },
+      );
     } catch (err) {
-      console.error(`[db] status update failed:`, err.message);
+      console.error("[db] failed to update player identity:", err.message);
     }
 
     console.log(`[join_room] ${socket.id} → room ${roomId} as ${color}`);
@@ -275,66 +450,58 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("game_state", buildGameState(room, roomId));
   });
 
-  // ── Join as spectator ────────────────────────────────────────────────
   socket.on("join_spectator", (data, callback) => {
     const { roomId } = data;
     const room = rooms[roomId];
-
     if (!room) return callback({ error: "Room not found" });
     if (room.status === "finished")
       return callback({ error: "Game has ended" });
-
     room.spectators.add(socket.id);
     socket.join(roomId);
-
-    console.log(
-      `[spectator] ${socket.id} watching room ${roomId} (${room.spectators.size} viewers)`,
-    );
-
-    // Send current game state immediately so board jumps to current position
+    console.log(`[spectator] ${socket.id} watching room ${roomId}`);
     callback({ ok: true, spectatorCount: room.spectators.size });
     socket.emit("game_state", buildGameState(room, roomId));
-
-    // Tell players someone joined to watch
     io.to(roomId).emit("spectator_count", { count: room.spectators.size });
   });
 
-  // ── Rejoin room ──────────────────────────────────────────────────────
   socket.on("rejoin_room", async (data, callback) => {
-    if (typeof callback !== "function")
-      return console.error("[rejoin_room] missing callback");
+    if (typeof callback !== "function") return;
     const { roomId, color } = data;
-
     let room = rooms[roomId];
-    if (!room) {
-      console.log(
-        `[rejoin_room] Room ${roomId} not in memory — restoring from DB`,
-      );
-      room = await dbRestoreRoom(roomId);
-    }
-
+    if (!room) room = await dbRestoreRoom(roomId);
     if (!room) return callback({ error: "Room expired" });
+
+    if (socket.userId) {
+      try {
+        const user = await User.findById(socket.userId).select(
+          "username ratings",
+        );
+        if (user) {
+          room.identities[color] = {
+            userId: user._id,
+            username: user.username,
+            rating: user.ratings[room.timeControl] ?? 1200,
+          };
+        }
+      } catch (err) {
+        /* non-fatal */
+      }
+    }
 
     room.players[color] = socket.id;
     socket.join(roomId);
-
     if (room.players.white && room.players.black && room.status === "playing") {
       startTimer(roomId);
     }
-
-    console.log(`[rejoin_room] ${socket.id} → room ${roomId} as ${color}`);
     callback({ ok: true });
     io.to(roomId).emit("game_state", buildGameState(room, roomId));
     io.to(roomId).emit("opponent_reconnected");
   });
 
-  // ── Make move ────────────────────────────────────────────────────────
   socket.on("make_move", async ({ roomId, from, to, promotion = "q" }) => {
     const room = rooms[roomId];
     if (!room || room.status !== "playing") return;
-
     const color = getColorForSocket(room, socket.id);
-    // Spectators are silently ignored — they have no color
     if (!color) return;
 
     const chess = room.chess;
@@ -349,7 +516,6 @@ io.on("connection", (socket) => {
     } catch {
       result = null;
     }
-
     if (!result) {
       socket.emit("move_error", { message: "Illegal move" });
       return;
@@ -370,16 +536,18 @@ io.on("connection", (socket) => {
         : chess.isStalemate()
           ? "stalemate"
           : "draw";
-      await dbFinishGame(roomId, winner, endReason);
+      const ratingChanges = await dbFinishGame(roomId, room, winner, endReason);
+      io.to(roomId).emit("game_state", {
+        ...buildGameState(room, roomId),
+        ratingChanges,
+      });
     } else {
       await dbSaveMove(roomId, room);
+      io.to(roomId).emit("game_state", buildGameState(room, roomId));
     }
-
     console.log(`[make_move] room ${roomId}: ${result.san}`);
-    io.to(roomId).emit("game_state", buildGameState(room, roomId));
   });
 
-  // ── Resign ───────────────────────────────────────────────────────────
   socket.on("resign", async ({ roomId }) => {
     const room = rooms[roomId];
     if (!room) return;
@@ -388,18 +556,24 @@ io.on("connection", (socket) => {
     stopTimer(room);
     room.status = "finished";
     const winner = color === "white" ? "black" : "white";
-    io.to(roomId).emit("game_over", { winner, reason: "resignation" });
-    await dbFinishGame(roomId, winner, "resignation");
+    const ratingChanges = await dbFinishGame(
+      roomId,
+      room,
+      winner,
+      "resignation",
+    );
+    io.to(roomId).emit("game_over", {
+      winner,
+      reason: "resignation",
+      ratingChanges,
+    });
     console.log(`[resign] ${color} resigned in room ${roomId}`);
   });
 
-  // ── Rematch ──────────────────────────────────────────────────────────
   socket.on("vote_rematch", async ({ roomId }) => {
     const room = rooms[roomId];
     if (!room) return;
-    // Only players can vote for rematch, not spectators
     if (!getColorForSocket(room, socket.id)) return;
-
     room.rematchVotes.add(socket.id);
 
     if (room.rematchVotes.size >= 2) {
@@ -414,10 +588,12 @@ io.on("connection", (socket) => {
       const { white, black } = room.players;
       room.players.white = black;
       room.players.black = white;
-      // Spectators stay in the room automatically — they're in the socket.io room
+      const { white: wi, black: bi } = room.identities;
+      room.identities.white = bi;
+      room.identities.black = wi;
 
       const newRoomId = roomId + "R";
-      await dbCreateGame(newRoomId, room.timeControl);
+      await dbCreateGame(newRoomId, room);
       await Game.findOneAndUpdate({ roomId: newRoomId }, { status: "playing" });
 
       startTimer(roomId);
@@ -433,20 +609,15 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ── Disconnect ───────────────────────────────────────────────────────
   socket.on("disconnect", async () => {
     const result = getRoomForSocket(socket.id);
     if (!result) return;
     const { roomId, room } = result;
     const color = getColorForSocket(room, socket.id);
 
-    // Handle spectator leaving cleanly
     if (!color) {
       room.spectators.delete(socket.id);
       io.to(roomId).emit("spectator_count", { count: room.spectators.size });
-      console.log(
-        `[spectator left] ${socket.id} left room ${roomId} (${room.spectators.size} remaining)`,
-      );
       return;
     }
 
@@ -464,25 +635,28 @@ io.on("connection", (socket) => {
           : r.players.black === socket.id;
       if (stillGone) {
         delete rooms[roomId];
-        console.log(`[cleanup] room ${roomId} removed from memory`);
+        console.log(`[cleanup] room ${roomId} removed`);
       }
     }, 30_000);
   });
 });
 
-// ─── REST endpoints ────────────────────────────────────────────────────────
-
-// Active games list — used by the spectator lobby
+// ─── REST ──────────────────────────────────────────────────────────────────
 app.get("/games/active", (_, res) => {
   const active = Object.entries(rooms)
-    .filter(([, room]) => room.status === "playing")
-    .map(([roomId, room]) => ({
+    .filter(([, r]) => r.status === "playing")
+    .map(([roomId, r]) => ({
       roomId,
-      timeControl: room.timeControl,
-      moveCount: room.chess.history().length,
-      spectatorCount: room.spectators.size,
-      timeWhite: room.timeWhite,
-      timeBlack: room.timeBlack,
+      timeControl: r.timeControl,
+      rated: r.rated,
+      moveCount: r.chess.history().length,
+      spectatorCount: r.spectators.size,
+      timeWhite: r.timeWhite,
+      timeBlack: r.timeBlack,
+      playerNames: {
+        white: r.identities.white?.username ?? "Guest",
+        black: r.identities.black?.username ?? "Guest",
+      },
     }));
   res.json(active);
 });
@@ -492,7 +666,9 @@ app.get("/games/recent", async (_, res) => {
     const games = await Game.find({ status: "finished" })
       .sort({ updatedAt: -1 })
       .limit(20)
-      .select("roomId timeControl winner endReason createdAt updatedAt");
+      .select(
+        "roomId timeControl winner endReason playerNames ratingChanges createdAt",
+      );
     res.json(games);
   } catch (err) {
     res.status(500).json({ error: err.message });

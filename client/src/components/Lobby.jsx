@@ -7,17 +7,22 @@ export default function Lobby({
   onJoinRoom,
   onWatchGame,
   connected,
+  user,
+  onLoginRequest,
+  onLogout,
+  onProfile,
 }) {
-  const [tab, setTab] = useState("play"); // 'play' | 'watch'
+  const [tab, setTab] = useState("play");
   const [joinCode, setJoinCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [timeControl, setTimeControl] = useState("blitz");
+  const [rated, setRated] = useState(false);
 
   async function handleCreate() {
     setLoading(true);
     setError("");
-    await onCreateRoom(timeControl);
+    await onCreateRoom(timeControl, rated);
     setLoading(false);
   }
 
@@ -41,7 +46,37 @@ export default function Lobby({
         <p className="lobby-subtitle">Real-time multiplayer</p>
       </div>
 
-      {/* Tab switcher */}
+      {/* User greeting / guest bar */}
+      <div className="lobby-user-bar">
+        {user ? (
+          <>
+            <span className="lobby-greeting">
+              Welcome,{" "}
+              <span
+                className="lobby-username-link"
+                onClick={() => onProfile(user.username)}
+              >
+                {user.username}
+              </span>
+              <span className="player-rating" style={{ marginLeft: 6 }}>
+                {user.ratings?.[timeControl] ?? 1200}
+              </span>
+            </span>
+            <button className="btn-text" onClick={onLogout}>
+              Logout
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="lobby-greeting muted">Playing as guest</span>
+            <button className="btn-text" onClick={onLoginRequest}>
+              Login / Register
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Tabs */}
       <div className="lobby-tabs">
         <button
           className={`lobby-tab ${tab === "play" ? "lobby-tab-active" : ""}`}
@@ -63,8 +98,19 @@ export default function Lobby({
           <div className="card lobby-card">
             <div className="lobby-card-icon">⊕</div>
             <h2>New Game</h2>
-            <p>Choose time control, then share the room code.</p>
+            <p>Choose time control and share the room code.</p>
             <TimeControlPicker value={timeControl} onChange={setTimeControl} />
+            {/* Rated toggle — only for logged-in users */}
+            {user && (
+              <label className="rated-toggle">
+                <input
+                  type="checkbox"
+                  checked={rated}
+                  onChange={(e) => setRated(e.target.checked)}
+                />
+                <span>Rated game</span>
+              </label>
+            )}
             <button
               className="btn btn-primary"
               onClick={handleCreate}

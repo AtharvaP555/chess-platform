@@ -15,12 +15,29 @@ export default function PlayerBar({
   captured,
   label,
   timeMs,
+  identity,
+  onProfileClick,
 }) {
+  // identity: { username, rating } | null (guest)
+  const displayName =
+    identity?.username ?? label ?? (color === "white" ? "White" : "Black");
+  const rating = identity?.rating ?? null;
+
   return (
     <div className={`player-bar ${isActive ? "active-turn" : ""}`}>
       <div className="player-name">
         <span className={`color-dot ${color}`} />
-        {label || (color === "white" ? "White" : "Black")}
+        <span
+          className={identity ? "player-username-link" : ""}
+          onClick={
+            identity && onProfileClick
+              ? () => onProfileClick(identity.username)
+              : undefined
+          }
+        >
+          {displayName}
+        </span>
+        {rating !== null && <span className="player-rating">{rating}</span>}
       </div>
       <div className="captured-pieces">
         {captured.map((type, i) => (

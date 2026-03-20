@@ -1,12 +1,23 @@
 # ♞ Chess Platform
 
-A real-time multiplayer chess platform with spectator mode, AI analysis, and post-game review — built with React, Node.js, Socket.io, and MongoDB.
+A real-time multiplayer chess platform with user accounts, ELO ratings, spectator mode, AI analysis, and post-game review — built with React, Node.js, Socket.io, and MongoDB.
 
 **Live demo → [chess-platform-tau.vercel.app](https://chess-platform-tau.vercel.app)**
 
 ---
 
 ## Features
+
+### User Accounts & ELO
+
+- Register an account or continue as a guest
+- JWT-based authentication persisted across sessions
+- Separate ELO rating per time control (Bullet, Blitz, Rapid, Classic)
+- Adaptive K-factor — 32 for new players, 16 for established players
+- Rated vs unrated toggle when creating a room
+- Rating only changes when both players are registered
+- Rating change toast (+12 / -8) shown after every rated game
+- Profile page with win/loss/draw record, all four ratings, and last 10 games
 
 ### Multiplayer
 
@@ -58,6 +69,7 @@ A real-time multiplayer chess platform with spectator mode, AI analysis, and pos
 | Real-time   | Socket.io                        |
 | Backend     | Node.js, Express                 |
 | Database    | MongoDB Atlas, Mongoose          |
+| Auth        | JWT, bcryptjs                    |
 | Chess logic | chess.js                         |
 | AI engine   | Stockfish (WebAssembly)          |
 | Deployment  | Vercel (client), Render (server) |
@@ -92,6 +104,7 @@ Create `server/.env`:
 ```
 MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/chess
 PORT=3001
+JWT_SECRET=your_random_secret_here
 ```
 
 ### Run Locally
@@ -112,11 +125,14 @@ Open [http://localhost:5173](http://localhost:5173) in two browser tabs to play 
 
 ```
 chess-platform/
-├── client/                  # React frontend
+├── client/                      # React frontend
 │   ├── public/
-│   │   └── stockfish.js     # Stockfish WASM engine
+│   │   └── stockfish.js         # Stockfish WASM engine
 │   └── src/
 │       ├── components/
+│       │   ├── AuthScreen.jsx    # Login / register / guest screen
+│       │   ├── ProfilePage.jsx   # User profile overlay
+│       │   ├── RatingChangeToast.jsx
 │       │   ├── Board.jsx
 │       │   ├── Clock.jsx
 │       │   ├── EvalBar.jsx
@@ -133,21 +149,34 @@ chess-platform/
 │       │   ├── Controls.jsx
 │       │   └── ConnectionBanner.jsx
 │       ├── hooks/
-│       │   ├── useSocket.js
+│       │   ├── useAuth.js        # Auth state, login, register, logout
+│       │   ├── useSocket.js      # Socket.io connection with JWT
 │       │   ├── useStockfish.js
 │       │   ├── useReplay.js
 │       │   └── useGameSession.js
 │       └── App.jsx
 └── server/
     ├── models/
-    │   └── Game.js          # Mongoose schema
-    ├── db.js                # MongoDB connection
-    └── index.js             # Express + Socket.io server
+    │   ├── User.js              # User schema with per-TC ratings
+    │   └── Game.js              # Game schema with player identity + rating changes
+    ├── authRoutes.js            # Register, login, profile endpoints
+    ├── authMiddleware.js        # JWT verification middleware
+    ├── elo.js                   # ELO calculation logic
+    ├── db.js                    # MongoDB connection
+    └── index.js                 # Express + Socket.io server
 ```
 
 ---
 
 ## How It Works
+
+### Authentication
+
+On first visit the auth screen is shown. Registering or logging in stores a JWT in `localStorage`. The token is sent with every socket connection in the handshake `auth` field — the server verifies it and attaches the user identity to the socket without needing to ask again per event.
+
+### ELO Calculation
+
+When a rated game finishes, the server fetches both users from MongoDB, runs the standard ELO formula, and updates their ratings for that time control. The rating delta is sent back in the `game_over` event and shown as a toast on the client. K-factor is 32 for the first 30 games and 16 thereafter.
 
 ### Move Flow
 
@@ -182,7 +211,7 @@ Player session (roomId + color) is stored in `localStorage`. On reconnect, the c
 
 ## Roadmap
 
-- [ ] ELO rating system
+- [x] ELO rating system
 - [ ] Tournament mode
 - [ ] In-game chat
 - [ ] Daily puzzles
