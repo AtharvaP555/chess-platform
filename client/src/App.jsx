@@ -546,7 +546,7 @@ export default function App() {
 
           <MoveHistory
             history={history}
-            highlightIndex={isReplaying ? currentIndex - 1 : null}
+            highlightIndex={isReplaying ? currentIndex : null}
           />
 
           {/* Replay controls — shown after game ends */}

@@ -151,7 +151,10 @@ export default function Board({
           <button
             className="overlay-dismiss"
             onClick={() => setDismissed(true)}
-          ></button>
+            style={{ color: "#ffffff", lineHeight: 1 }}
+          >
+            &#x2715;
+          </button>
           <h2>
             {gameOver.winner
               ? myColor === null
